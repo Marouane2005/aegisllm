@@ -85,3 +85,15 @@ class AuditPayload(Base):
     masked_request = Column(Text, nullable=True)
     raw_response = Column(Text, nullable=True)
     masked_response = Column(Text, nullable=True)
+
+
+class PayloadAccessLog(Base):
+    """One row per read of raw (unmasked) audit payloads."""
+    __tablename__ = "payload_access_logs"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_email = Column(String(255), nullable=False)
+    project_id = Column(UUID(as_uuid=True), nullable=False)
+    audit_log_id = Column(UUID(as_uuid=True), nullable=False)
+    client_ip = Column(String(64), nullable=True)
+    accessed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

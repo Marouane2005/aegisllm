@@ -33,6 +33,11 @@ async def get_current_user(
     return user
 
 
+def is_admin(user: User) -> bool:
+    admins = {e.strip().lower() for e in get_settings().ADMIN_EMAILS.split(",") if e.strip()}
+    return user.email.lower() in admins
+
+
 async def authenticate_api_key(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),

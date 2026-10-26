@@ -3,14 +3,15 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin
 from app.core.security import generate_api_key, encrypt_secret
 from app.db.session import get_db
-from app.db.models import User, Project, ApiKey, ProviderConfig, AuditLog, AuditPayload
+from app.db.models import User, Project, ApiKey, ProviderConfig, AuditLog, AuditPayload, PayloadAccessLog
 from app.schemas.admin import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse,
@@ -18,6 +19,7 @@ from app.schemas.admin import (
     AuditLogResponse, AuditListResponse, MetricsResponse,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -241,12 +243,15 @@ async def list_audit_logs(
 
 @router.get("/projects/{project_id}/audit-logs/{log_id}")
 async def get_audit_payload(
+    request: Request,
     project_id: uuid.UUID,
     log_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     include_raw: bool = Query(False),
 ):
+    if include_raw and not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="include_raw requires an admin account")
     result = await db.execute(select(Project).where(Project.id == project_id, Project.owner_id == current_user.id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
@@ -263,6 +268,12 @@ async def get_audit_payload(
         "masked_response": payload.masked_response,
     }
     if include_raw:
+        db.add(PayloadAccessLog(
+            user_id=current_user.id, user_email=current_user.email, project_id=project_id,
+            audit_log_id=log_id, client_ip=request.client.host if request.client else None,
+        ))
+        await db.commit()
+        logger.warning("raw payload access user=%s log=%s", current_user.email, log_id)
         response_data["raw_request"] = payload.raw_request
         response_data["raw_response"] = payload.raw_response
     return response_data

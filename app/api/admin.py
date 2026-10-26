@@ -192,15 +192,17 @@ async def list_audit_logs(
     if start_time:
         try:
             start_dt = datetime.fromisoformat(start_time)
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            if start_dt.tzinfo is not None:
+                # audit_logs.timestamp is TIMESTAMP WITHOUT TIME ZONE holding UTC
+                start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start_time format")
     if end_time:
         try:
             end_dt = datetime.fromisoformat(end_time)
-            if end_dt.tzinfo is None:
-                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            if end_dt.tzinfo is not None:
+                # audit_logs.timestamp is TIMESTAMP WITHOUT TIME ZONE holding UTC
+                end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_time format")
 
@@ -281,7 +283,8 @@ async def get_metrics(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    # audit_logs.timestamp is naive UTC; asyncpg rejects tz-aware params for it
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     base_where = [AuditLog.project_id == project_id, AuditLog.timestamp >= cutoff]
 
     total_result = await db.execute(select(func.count(AuditLog.id)).where(*base_where))

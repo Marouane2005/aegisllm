@@ -20,7 +20,7 @@ AegisLLM sits between your applications and LLM providers (OpenAI, Anthropic), i
 - 📈 Metrics — request counts, latency percentiles, token usage, breakdowns by action/provider
 - 🔑 Per-project API keys — hashed storage, plaintext shown once at creation
 - 🔒 Encrypted upstream credentials — Fernet-encrypted at rest, never returned to the dashboard
-- 🧹 Automatic retention — scheduled cleanup keeps disk usage bounded forever
+- 🧹 Automatic retention — daily batched cleanup of old payloads (per project) and old audit log rows (global window)
 - ⚡ Streaming support — full SSE streaming with audit, bounded memory, client-disconnect safe
 - 🐳 One-command deploy — Docker Compose with Postgres, Redis, Caddy (HTTPS auto)
 
@@ -46,3 +46,14 @@ Oracle Cloud Console → Compute → Create Instance:
 sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 sudo iptables -I INPUT -p udp --dport 443 -j ACCEPT
+
+
+## Retention
+
+A daily job (`CLEANUP_HOUR_UTC`:`CLEANUP_MINUTE_UTC`, default **03:00 UTC**) runs two passes, each in batches of
+`CLEANUP_BATCH_SIZE` rows (default **1000**, committed per batch):
+
+1. **Payload bodies** older than the project's `retention_days` (default 30) are deleted; the metadata row stays.
+2. **Audit log rows** older than `AUDIT_LOG_RETENTION_DAYS` (default **90**, `0` = keep forever) are deleted, along with any remaining payload.
+
+Metrics and the dashboard only cover rows still within the audit-log window.

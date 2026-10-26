@@ -15,7 +15,8 @@ async def cleanup_old_payloads() -> None:
             projects = (await session.execute(select(Project))).scalars().all()
             total_deleted = 0
             for project in projects:
-                cutoff = datetime.now(timezone.utc) - timedelta(days=project.retention_days)
+                # audit_logs.timestamp is naive UTC; asyncpg rejects tz-aware params for it
+                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=project.retention_days)
                 stmt = delete(AuditPayload).where(
                     AuditPayload.audit_log_id.in_(
                         select(AuditLog.id).where(

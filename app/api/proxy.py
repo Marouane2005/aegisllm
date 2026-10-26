@@ -40,7 +40,9 @@ async def _resolve_provider_config(db: AsyncSession, project_id: uuid.UUID, prov
             raise HTTPException(404, f"Provider '{provider_hint}' not configured")
         return config
     result = await db.execute(
-        select(ProviderConfig).where(ProviderConfig.project_id == project_id, ProviderConfig.is_active == True)
+        select(ProviderConfig)
+        .where(ProviderConfig.project_id == project_id, ProviderConfig.is_active == True)
+        .order_by(ProviderConfig.created_at, ProviderConfig.id)
     )
     config = result.scalars().first()
     if config is None:

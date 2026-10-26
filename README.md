@@ -46,3 +46,11 @@ Oracle Cloud Console → Compute → Create Instance:
 sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 sudo iptables -I INPUT -p udp --dport 443 -j ACCEPT
+
+
+## Rate limiting
+
+`/v1/*` proxy routes are limited **per API key** to `RATE_LIMIT_PER_MINUTE` requests per minute (default **60**; `0` disables).
+Counters live in Redis (`REDIS_URL`), so they are shared across workers and restarts. Over the limit the proxy returns
+`429` with a `Retry-After` header (seconds until the window resets). Auth routes keep their own per-IP limits
+(register 5/min, login 10/min).

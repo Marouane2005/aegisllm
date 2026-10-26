@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     RATE_LIMIT_PER_MINUTE: int = 60
     CLEANUP_HOUR_UTC: int = 3
+    CLEANUP_MINUTE_UTC: int = 0
+    # Audit log rows (metadata) older than this many days are deleted by the cleanup job.
+    # Payload bodies follow each project's retention_days. 0 disables audit-log deletion.
+    AUDIT_LOG_RETENTION_DAYS: int = 90
+    CLEANUP_BATCH_SIZE: int = 1000
 
 
 @lru_cache

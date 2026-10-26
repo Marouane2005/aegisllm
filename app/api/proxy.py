@@ -22,6 +22,8 @@ from app.services.ssrf_guard import SSRFError
 from app.services.audit_service import write_audit_record
 
 logger = logging.getLogger(__name__)
+SUPPORTED_CHAT_COMPLETIONS_PROVIDERS = {"openai"}
+
 router = APIRouter()
 settings = get_settings()
 
@@ -75,6 +77,14 @@ async def chat_completions(
 
     async with AsyncSessionLocal() as db:
         provider_config = await _resolve_provider_config(db, api_key.project_id, provider_hint)
+
+    if provider_config.provider not in SUPPORTED_CHAT_COMPLETIONS_PROVIDERS:
+        # Anthropic uses a different API shape (/v1/messages); forwarding OpenAI-format
+        # bodies to it fails with confusing upstream errors, so refuse clearly instead.
+        return JSONResponse(status_code=501, content={"error": {
+            "message": f"Provider '{provider_config.provider}' is not supported yet on /v1/chat/completions",
+            "type": "provider_not_supported",
+        }})
 
     client_ip = request.client.host if request.client else None
     model = body.get("model", "unknown")

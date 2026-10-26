@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.db.models import ApiKey, ProviderConfig
 from app.db.session import AsyncSessionLocal
 from app.services.proxy_service import (
-    process_request, forward_request, stream_request,
+    PromptInjectionBlocked, process_request, forward_request, stream_request,
     parse_sse_chunk, accumulate_stream_text, extract_token_usage,
     _estimate_tokens, close_client,
 )
@@ -83,8 +83,9 @@ async def chat_completions(
 
     try:
         modified_body, threat_summary, action_taken = await process_request(body, provider_config, request_id, client_ip)
-    except ValueError as e:
+    except PromptInjectionBlocked as e:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        threat_summary = dict(e.threat_summary)
         threat_summary["blocked"] = True
         threat_summary["reason"] = str(e)
         background_tasks.add_task(

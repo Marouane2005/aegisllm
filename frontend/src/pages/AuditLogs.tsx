@@ -64,6 +64,10 @@ export default function AuditLogs() {
     try {
       const res = await api.get(`/admin/projects/${projectId}/audit-logs/${selectedLog.id}`, { params: { include_raw: true } });
       setPayload(res.data);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      alert(status === 403 ? 'Raw payloads are restricted to admins.' : 'Failed to load raw payload.');
+      setShowRaw(false);
     } finally { setPayloadLoading(false); }
   };
 

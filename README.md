@@ -16,7 +16,7 @@ AegisLLM sits between your applications and LLM providers (OpenAI, Anthropic), i
 - 🔐 Transparent reverse proxy — drop-in replacement for `api.openai.com`
 - 🛡️ PII detection — email, credit cards (Luhn-validated), SSN, AWS keys, API keys, IPs
 - 🚫 Prompt injection guard — jailbreak phrases, invisible Unicode, base64-encoded payloads, homoglyphs
-- 📊 Audit dashboard — cursor-paginated logs, filters, threat summaries, raw/masked payload viewer
+- 📊 Audit dashboard — cursor-paginated logs, filters, threat summaries, masked payload viewer (raw view: opt-in, admin-only, access-logged — see *Payload privacy*)
 - 📈 Metrics — request counts, latency percentiles, token usage, breakdowns by action/provider
 - 🔑 Per-project API keys — hashed storage, plaintext shown once at creation
 - 🔒 Encrypted upstream credentials — Fernet-encrypted at rest, never returned to the dashboard
@@ -46,3 +46,13 @@ Oracle Cloud Console → Compute → Create Instance:
 sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 sudo iptables -I INPUT -p udp --dport 443 -j ACCEPT
+
+
+## Payload privacy
+
+Audit payloads are PII-masked **at write time**; by default only the masked request/response is stored.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `STORE_RAW_PAYLOADS` | `false` | When `true`, the unmasked bodies are stored as well. |
+| `ADMIN_EMAILS` | *(empty)* | Comma-separated emails allowed to call `GET /api/admin/projects/{id}/audit-logs/{log_id}?include_raw=true`. Everyone else gets `403`. Each raw read is recorded in `payload_access_logs` (user, project, log id, client IP, time). |

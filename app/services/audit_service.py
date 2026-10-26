@@ -3,9 +3,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import get_settings
 from app.db.models import AuditLog, AuditPayload
+from app.services.pii_detector import detect_pii, mask_text
 
 logger = logging.getLogger(__name__)
+
+
+def mask_payload(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return text
+    return mask_text(text, detect_pii(text))
 
 
 async def write_audit_record(
@@ -26,6 +34,12 @@ async def write_audit_record(
     raw_response: Optional[str] = None,
     masked_response: Optional[str] = None,
 ) -> None:
+    # Mask at write time: the masked copies are always derived from the raw text here,
+    # and raw text is only persisted when STORE_RAW_PAYLOADS is explicitly enabled.
+    masked_request = mask_payload(masked_request or raw_request)
+    masked_response = mask_payload(masked_response or raw_response)
+    if not get_settings().STORE_RAW_PAYLOADS:
+        raw_request = raw_response = None
     try:
         log = AuditLog(
             project_id=project_id,

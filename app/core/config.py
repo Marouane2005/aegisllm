@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     FERNET_MASTER_KEY: SecretStr
 
     ALLOWED_UPSTREAM_HOSTS: str = "api.openai.com,api.anthropic.com"
+    # Store unmasked request/response bodies alongside the masked copy. OFF by default:
+    # with this off, only PII-masked payloads are ever written to the database.
+    STORE_RAW_PAYLOADS: bool = False
+    # Comma-separated user emails allowed to read raw payloads (include_raw=true).
+    ADMIN_EMAILS: str = ""
     PROXY_REQUEST_TIMEOUT_SEC: int = 120
     MAX_REQUEST_BODY_BYTES: int = 2 * 1024 * 1024
 

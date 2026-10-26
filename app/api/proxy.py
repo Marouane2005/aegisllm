@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -14,7 +15,7 @@ from app.core.config import get_settings
 from app.db.models import ApiKey, ProviderConfig
 from app.db.session import AsyncSessionLocal
 from app.services.proxy_service import (
-    process_request, forward_request, stream_request,
+    PromptInjectionBlocked, process_request, forward_request, stream_request,
     parse_sse_chunk, accumulate_stream_text, extract_token_usage,
     _estimate_tokens, close_client,
 )
@@ -53,6 +54,17 @@ async def _audit_background(**kwargs):
         await write_audit_record(db=session, **kwargs)
 
 
+_pending_audits: set = set()
+
+
+async def _audit_shielded(**kwargs):
+    """Write an audit record even if the caller is being cancelled (client disconnect)."""
+    task = asyncio.ensure_future(_audit_background(**kwargs))
+    _pending_audits.add(task)
+    task.add_done_callback(_pending_audits.discard)
+    await asyncio.shield(task)
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: Request,
@@ -83,8 +95,9 @@ async def chat_completions(
 
     try:
         modified_body, threat_summary, action_taken = await process_request(body, provider_config, request_id, client_ip)
-    except ValueError as e:
+    except PromptInjectionBlocked as e:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        threat_summary = dict(e.threat_summary)
         threat_summary["blocked"] = True
         threat_summary["reason"] = str(e)
         background_tasks.add_task(
@@ -171,7 +184,7 @@ async def _handle_streaming(body, provider_config, background_tasks, api_key, re
                 yield chunk
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            await _audit_background(
+            await _audit_shielded(
                 project_id=api_key.project_id, request_id=request_id,
                 provider=provider_config.provider, model=model,
                 latency_ms=latency_ms, input_tokens=_estimate_tokens(raw_request),

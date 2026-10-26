@@ -20,6 +20,7 @@ from app.services.proxy_service import (
 )
 from app.services.ssrf_guard import SSRFError
 from app.services.audit_service import write_audit_record
+from app.core.rate_limit import rate_limited_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,7 +58,7 @@ async def _audit_background(**kwargs):
 async def chat_completions(
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: ApiKey = Depends(authenticate_api_key),
+    api_key: ApiKey = Depends(rate_limited_api_key),
 ):
     start_time = time.perf_counter()
     request_id = str(uuid.uuid4())

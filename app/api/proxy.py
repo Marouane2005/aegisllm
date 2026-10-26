@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -51,6 +52,17 @@ async def _resolve_provider_config(db: AsyncSession, project_id: uuid.UUID, prov
 async def _audit_background(**kwargs):
     async with AsyncSessionLocal() as session:
         await write_audit_record(db=session, **kwargs)
+
+
+_pending_audits: set = set()
+
+
+async def _audit_shielded(**kwargs):
+    """Write an audit record even if the caller is being cancelled (client disconnect)."""
+    task = asyncio.ensure_future(_audit_background(**kwargs))
+    _pending_audits.add(task)
+    task.add_done_callback(_pending_audits.discard)
+    await asyncio.shield(task)
 
 
 @router.post("/chat/completions")
@@ -171,7 +183,7 @@ async def _handle_streaming(body, provider_config, background_tasks, api_key, re
                 yield chunk
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            await _audit_background(
+            await _audit_shielded(
                 project_id=api_key.project_id, request_id=request_id,
                 provider=provider_config.provider, model=model,
                 latency_ms=latency_ms, input_tokens=_estimate_tokens(raw_request),

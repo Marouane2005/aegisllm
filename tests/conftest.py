@@ -12,6 +12,7 @@ os.environ.setdefault("POSTGRES_HOST", "localhost")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-testing-only-1234567890")
 os.environ.setdefault("FERNET_MASTER_KEY", Fernet.generate_key().decode())
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost")
+os.environ.setdefault("REDIS_URL", "memory://")
 
 from app.main import app
 from app.db.session import engine
@@ -27,6 +28,8 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="function")
 async def setup_db():
+    from app.core.rate_limit import limiter
+    limiter.reset()  # rate-limit counters must not leak between tests
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield

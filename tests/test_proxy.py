@@ -33,9 +33,14 @@ async def test_proxy_masks_email(client, project_with_key):
     }
     fake_response.text = json.dumps(fake_response.json.return_value)
 
-    with patch("app.services.proxy_service._get_client") as mock_get_client:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=fake_response)
+    import httpx
+    async def _public(host, port):
+        return ["104.18.6.192"]
+    with patch("app.services.proxy_service._get_client") as mock_get_client, \
+         patch("app.services.ssrf_guard._resolve", _public):
+        mock_client = MagicMock()
+        mock_client.build_request = httpx.Client().build_request
+        mock_client.send = AsyncMock(return_value=fake_response)
         mock_client.is_closed = False
         mock_get_client.return_value = mock_client
 
@@ -46,8 +51,8 @@ async def test_proxy_masks_email(client, project_with_key):
         )
 
     assert resp.status_code == 200
-    call_kwargs = mock_client.post.call_args
-    forwarded_body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+    sent_request = mock_client.send.call_args.args[0]
+    forwarded_body = json.loads(sent_request.content)
     forwarded_content = forwarded_body["messages"][0]["content"]
     assert "john.doe@example.com" not in forwarded_content
     assert "[EMAIL_REDACTED]" in forwarded_content

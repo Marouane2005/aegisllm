@@ -2,12 +2,13 @@ import json
 import logging
 from typing import AsyncIterator, Optional, Tuple
 import httpx
+from urllib.parse import urlparse
 from app.core.config import get_settings
 from app.core.security import decrypt_secret
 from app.db.models import ProviderConfig
 from app.services.pii_detector import detect_pii, mask_text, summarize_findings
 from app.services.injection_guard import evaluate_injection_risk
-from app.services.ssrf_guard import validate_upstream_url
+from app.services.ssrf_guard import resolve_and_validate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -54,6 +55,19 @@ def _build_upstream_headers(provider_config: ProviderConfig) -> dict:
         headers["anthropic-version"] = "2023-06-01"
         del headers["Authorization"]
     return headers
+
+
+async def _build_pinned_request(body: dict, provider_config: ProviderConfig, path: str) -> httpx.Request:
+    """Validate the upstream (DNS + IP blocklist) and build a request that connects to the
+    vetted IP while keeping the original Host header and TLS SNI/cert hostname.
+    Redirects are never followed (client has follow_redirects=False); 3xx is returned as-is."""
+    target = await resolve_and_validate(_build_upstream_url(provider_config, path))
+    headers = _build_upstream_headers(provider_config)
+    headers["Host"] = urlparse(target.url).netloc
+    return _get_client().build_request(
+        "POST", target.pinned_url, json=body, headers=headers,
+        extensions={"sni_hostname": target.host},
+    )
 
 
 def _extract_text_from_messages(messages: list) -> str:
@@ -131,20 +145,13 @@ async def process_request(body: dict, provider_config: ProviderConfig, request_i
 
 
 async def forward_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
-    url = _build_upstream_url(provider_config, path)
-    validate_upstream_url(url)
-    headers = _build_upstream_headers(provider_config)
-    client = _get_client()
-    return await client.post(url, json=body, headers=headers)
+    req = await _build_pinned_request(body, provider_config, path)
+    return await _get_client().send(req)
 
 
 async def stream_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
-    url = _build_upstream_url(provider_config, path)
-    validate_upstream_url(url)
-    headers = _build_upstream_headers(provider_config)
-    client = _get_client()
-    req = client.build_request("POST", url, json=body, headers=headers)
-    response = await client.send(req, stream=True)
+    req = await _build_pinned_request(body, provider_config, path)
+    response = await _get_client().send(req, stream=True)
     return response, response.aiter_bytes()
 
 

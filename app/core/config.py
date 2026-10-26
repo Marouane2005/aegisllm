@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     FERNET_MASTER_KEY: SecretStr
 
     ALLOWED_UPSTREAM_HOSTS: str = "api.openai.com,api.anthropic.com"
+    # CIDRs exempt from the SSRF private-IP block (e.g. a self-hosted gateway). Empty = none.
+    UPSTREAM_PRIVATE_IP_ALLOWLIST: str = ""
     PROXY_REQUEST_TIMEOUT_SEC: int = 120
     MAX_REQUEST_BODY_BYTES: int = 2 * 1024 * 1024
 

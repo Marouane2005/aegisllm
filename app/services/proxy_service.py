@@ -15,6 +15,14 @@ settings = get_settings()
 _http_client: Optional[httpx.AsyncClient] = None
 
 
+class PromptInjectionBlocked(ValueError):
+    """Raised when a request is blocked; carries the threat summary for auditing."""
+
+    def __init__(self, message: str, threat_summary: dict):
+        super().__init__(message)
+        self.threat_summary = threat_summary
+
+
 def _get_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
@@ -87,7 +95,7 @@ async def process_request(body: dict, provider_config: ProviderConfig, request_i
             "score": round(score, 3),
             "signals": [{"name": s.name, "evidence": s.evidence} for s in signals[:5]],
         }
-        raise ValueError("Prompt injection detected")
+        raise PromptInjectionBlocked("Prompt injection detected", threat_summary)
 
     if signals:
         threat_summary["injection"] = {

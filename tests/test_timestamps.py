@@ -53,3 +53,34 @@ async def test_retention_cleanup_deletes_only_old_payloads(client, project_with_
         count = lambda i: s.scalar(select(func.count()).select_from(AuditPayload).where(AuditPayload.audit_log_id == i))
         assert await count(old_id) == 0
         assert await count(new_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_deletes_old_audit_logs_in_batches(client, project_with_key, monkeypatch):
+    from app.core.config import get_settings
+    from app.core.scheduler import cleanup_old_payloads
+    monkeypatch.setattr(get_settings(), "AUDIT_LOG_RETENTION_DAYS", 60)
+    monkeypatch.setattr(get_settings(), "CLEANUP_BATCH_SIZE", 2)
+    _, _, project_id = project_with_key  # retention_days=7
+    ancient = [await _insert_log(project_id, timedelta(days=100)) for _ in range(5)]
+    mid = await _insert_log(project_id, timedelta(days=30))
+    fresh = await _insert_log(project_id, timedelta(days=1))
+    stats = await cleanup_old_payloads()
+    assert stats == {"payloads": 6, "audit_logs": 5}
+    async with AsyncSessionLocal() as s:
+        ids = set((await s.execute(select(AuditLog.id))).scalars().all())
+        assert ids == {mid, fresh}
+        payloads = set((await s.execute(select(AuditPayload.audit_log_id))).scalars().all())
+        assert payloads == {fresh}
+
+
+@pytest.mark.asyncio
+async def test_audit_log_retention_disabled(client, project_with_key, monkeypatch):
+    from app.core.config import get_settings
+    from app.core.scheduler import cleanup_old_payloads
+    monkeypatch.setattr(get_settings(), "AUDIT_LOG_RETENTION_DAYS", 0)
+    _, _, project_id = project_with_key
+    old = await _insert_log(project_id, timedelta(days=400))
+    await cleanup_old_payloads()
+    async with AsyncSessionLocal() as s:
+        assert await s.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.id == old)) == 1

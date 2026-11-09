@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { parseApiDate } from '../lib/time';
 
 interface Project { id: string; name: string; retention_days: number; created_at: string; }
 
@@ -68,7 +69,7 @@ export default function Projects() {
               <tr key={project.id}>
                 <td className="px-6 py-4">{project.name}</td>
                 <td className="px-6 py-4">{project.retention_days} days</td>
-                <td className="px-6 py-4">{new Date(project.created_at).toLocaleDateString()}</td>
+                <td className="px-6 py-4">{parseApiDate(project.created_at).toLocaleDateString()}</td>
                 <td className="px-6 py-4">
                   <Link to={`/projects/${project.id}/api-keys`} className="text-primary-600 hover:underline mr-4">API Keys</Link>
                   <Link to={`/projects/${project.id}/providers`} className="text-primary-600 hover:underline">Providers</Link>

@@ -1,8 +1,8 @@
 import logging
 import uuid
-from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.clock import utcnow_naive
 from app.core.config import get_settings
 from app.db.models import AuditLog, AuditPayload
 from app.services.pii_detector import detect_pii, mask_text
@@ -67,7 +67,7 @@ async def write_audit_record(
             threat_summary=threat_summary,
             status_code=status_code,
             client_ip=client_ip,
-            timestamp=datetime.utcnow(),
+            timestamp=utcnow_naive(),
         )
         db.add(log)
         await db.flush()

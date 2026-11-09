@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import { parseApiDate } from '../lib/time';
 
 interface ApiKey { id: string; name: string; key_prefix: string; is_active: boolean; created_at: string; last_used_at: string | null; }
 
@@ -105,8 +106,8 @@ export default function ApiKeys() {
                       {key.is_active ? 'Active' : 'Revoked'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{new Date(key.created_at).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{key.last_used_at ? new Date(key.last_used_at).toLocaleString() : 'Never'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{parseApiDate(key.created_at).toLocaleDateString()}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{key.last_used_at ? parseApiDate(key.last_used_at).toLocaleString() : 'Never'}</td>
                   <td className="px-6 py-4">
                     {key.is_active && <button onClick={() => handleRevoke(key.id)} className="text-red-600 hover:underline text-sm">Revoke</button>}
                   </td>

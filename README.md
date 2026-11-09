@@ -1,6 +1,6 @@
 # AegisLLM
 
-AegisLLM is a self-hosted proxy in front of OpenAI-compatible chat completions. It masks personal data before the request leaves your network, blocks a set of prompt-injection patterns, and writes an audit row for every call.
+AegisLLM is a self-hosted proxy in front of OpenAI-compatible chat completions. It masks personal data before the request leaves your network, blocks a set of prompt-injection patterns, and writes an audit row for every call made with a valid project key, including blocked and rate-limited ones.
 
 ```
 client  -->  Caddy  -->  AegisLLM  -->  api.openai.com
@@ -68,8 +68,8 @@ cd frontend && npm install && npm run dev
 
 ## What it does on a request
 
-1. Authenticate the project API key. Invalid keys are 401 and are not counted.
-2. Apply `RATE_LIMIT_PER_MINUTE` for that key. Over the limit is 429 with `Retry-After`. `0` turns the limit off.
+1. Authenticate the project API key. Invalid keys are 401, are not counted, and get no audit row, since there is no project to attach it to.
+2. Apply `RATE_LIMIT_PER_MINUTE` for that key. Over the limit is 429 with `Retry-After` and an audit row with `action_taken=rate_limited` (no body is stored). `0` turns the limit off.
 3. Reject a provider that `/v1/chat/completions` does not speak (Anthropic today) with 501.
 4. Score the message text for prompt injection. A block is **403** `security_policy_violation` and an audit row with `action_taken=blocked`.
 5. Mask emails, phone numbers, payment cards, IBANs, a few national-id formats, AWS keys, and IPv4 addresses in the outbound body.
@@ -130,7 +130,8 @@ These are current behavior, not a roadmap.
 - PII detection is regex plus checksums (Luhn for cards, mod-97 for IBANs, the Spanish DNI letter). It misses formats it does not know. A dotted quad is treated as an IP even when a human would call it a version number.
 - The response returned to your application is the upstream response. Masking applies to what is sent upstream and to what is stored. A model that echoes a secret back will echo it to the caller.
 - `/v1/chat/completions` does not speak Anthropic. The call fails with 501 before any upstream request.
-- `audit_logs.timestamp` is `timestamp without time zone` and stores UTC. Filters convert aware inputs to naive UTC.
+- `audit_logs.timestamp` is `timestamp without time zone` and stores UTC. Filters convert aware inputs to naive UTC, and API responses mark every timestamp as UTC (`Z`).
+- Malformed calls with a valid key (bad JSON, missing `messages`, an oversized body, an unconfigured provider) are rejected before the audit step and get no row.
 - The per-key limiter uses the synchronous Redis client inside the async request. That is the same storage slowapi uses for the auth limits.
 - The Compose file runs one Uvicorn worker. Rate limits are shared through Redis, so extra workers still share a counter, but nothing here load-tests that.
 - Dashboard sessions are JWTs in `localStorage`. Use HTTPS outside of localhost.

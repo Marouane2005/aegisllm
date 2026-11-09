@@ -1,12 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
 from app.db.models import User
@@ -14,7 +13,6 @@ from app.schemas.admin import UserRegister, UserLogin, TokenResponse, UserRespon
 
 router = APIRouter()
 settings = get_settings()
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

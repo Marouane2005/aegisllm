@@ -1,23 +1,21 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
 from app.core.scheduler import start_scheduler
+from app.core.rate_limit import limiter
 from app.api import auth, admin, proxy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
-limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
 
 
 @asynccontextmanager
@@ -30,7 +28,7 @@ async def lifespan(app: FastAPI):
     await close_client()
 
 
-app = FastAPI(title=settings.APP_NAME, version="0.1.0", lifespan=lifespan, docs_url="/docs" if settings.DEBUG else None, redoc_url=None)
+app = FastAPI(title=settings.APP_NAME, version="0.2.0", lifespan=lifespan, docs_url="/docs" if settings.DEBUG else None, redoc_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda r, e: JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}))
 

@@ -1,18 +1,27 @@
 import json
 import logging
-from typing import AsyncIterator, Optional, Tuple
+from typing import Optional
 import httpx
+from urllib.parse import urlparse
 from app.core.config import get_settings
 from app.core.security import decrypt_secret
 from app.db.models import ProviderConfig
 from app.services.pii_detector import detect_pii, mask_text, summarize_findings
 from app.services.injection_guard import evaluate_injection_risk
-from app.services.ssrf_guard import validate_upstream_url
+from app.services.ssrf_guard import SSRFError, resolve_and_validate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _http_client: Optional[httpx.AsyncClient] = None
+
+
+class PromptInjectionBlocked(ValueError):
+    """Raised when a request is blocked; carries the threat summary for auditing."""
+
+    def __init__(self, message: str, threat_summary: dict):
+        super().__init__(message)
+        self.threat_summary = threat_summary
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -56,6 +65,34 @@ def _build_upstream_headers(provider_config: ProviderConfig) -> dict:
     return headers
 
 
+def _host_header(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return host
+
+
+async def _build_pinned_request(body: dict, provider_config: ProviderConfig, path: str) -> httpx.Request:
+    """Validate the upstream (DNS + IP blocklist) and build a request that connects to the
+    vetted IP while keeping the original Host header and TLS SNI/cert hostname.
+    Redirects are never followed; a 3xx is rejected instead of being fetched."""
+    target = await resolve_and_validate(_build_upstream_url(provider_config, path))
+    headers = _build_upstream_headers(provider_config)
+    headers["Host"] = _host_header(target.url)
+    return _get_client().build_request(
+        "POST", target.pinned_url, json=body, headers=headers,
+        extensions={"sni_hostname": target.host},
+    )
+
+
+def _reject_redirect(response: httpx.Response) -> None:
+    if 300 <= response.status_code < 400:
+        raise SSRFError("Upstream redirect was not followed")
+
+
 def _extract_text_from_messages(messages: list) -> str:
     parts = []
     for msg in messages:
@@ -87,7 +124,7 @@ async def process_request(body: dict, provider_config: ProviderConfig, request_i
             "score": round(score, 3),
             "signals": [{"name": s.name, "evidence": s.evidence} for s in signals[:5]],
         }
-        raise ValueError("Prompt injection detected")
+        raise PromptInjectionBlocked("Prompt injection detected", threat_summary)
 
     if signals:
         threat_summary["injection"] = {
@@ -131,20 +168,22 @@ async def process_request(body: dict, provider_config: ProviderConfig, request_i
 
 
 async def forward_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
-    url = _build_upstream_url(provider_config, path)
-    validate_upstream_url(url)
-    headers = _build_upstream_headers(provider_config)
-    client = _get_client()
-    return await client.post(url, json=body, headers=headers)
+    req = await _build_pinned_request(body, provider_config, path)
+    response = await _get_client().send(req, follow_redirects=False)
+    try:
+        _reject_redirect(response)
+    except SSRFError:
+        await response.aclose()
+        raise
+    return response
 
 
 async def stream_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
-    url = _build_upstream_url(provider_config, path)
-    validate_upstream_url(url)
-    headers = _build_upstream_headers(provider_config)
-    client = _get_client()
-    req = client.build_request("POST", url, json=body, headers=headers)
-    response = await client.send(req, stream=True)
+    req = await _build_pinned_request(body, provider_config, path)
+    response = await _get_client().send(req, stream=True, follow_redirects=False)
+    if 300 <= response.status_code < 400:
+        await response.aclose()
+        raise SSRFError("Upstream redirect was not followed")
     return response, response.aiter_bytes()
 
 

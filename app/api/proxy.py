@@ -1,27 +1,30 @@
+import asyncio
 import json
 import logging
 import time
 import uuid
 from typing import Optional
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Path as PathParam
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import authenticate_api_key
 from app.core.config import get_settings
 from app.db.models import ApiKey, ProviderConfig
 from app.db.session import AsyncSessionLocal
 from app.services.proxy_service import (
-    process_request, forward_request, stream_request,
+    PromptInjectionBlocked, process_request, forward_request, stream_request,
     parse_sse_chunk, accumulate_stream_text, extract_token_usage,
-    _estimate_tokens, close_client,
+    _estimate_tokens,
 )
 from app.services.ssrf_guard import SSRFError
 from app.services.audit_service import write_audit_record
+from app.core.rate_limit import rate_limited_api_key
 
 logger = logging.getLogger(__name__)
+SUPPORTED_CHAT_COMPLETIONS_PROVIDERS = {"openai"}
+
 router = APIRouter()
 settings = get_settings()
 
@@ -40,7 +43,9 @@ async def _resolve_provider_config(db: AsyncSession, project_id: uuid.UUID, prov
             raise HTTPException(404, f"Provider '{provider_hint}' not configured")
         return config
     result = await db.execute(
-        select(ProviderConfig).where(ProviderConfig.project_id == project_id, ProviderConfig.is_active == True)
+        select(ProviderConfig)
+        .where(ProviderConfig.project_id == project_id, ProviderConfig.is_active == True)
+        .order_by(ProviderConfig.created_at, ProviderConfig.id)
     )
     config = result.scalars().first()
     if config is None:
@@ -53,11 +58,43 @@ async def _audit_background(**kwargs):
         await write_audit_record(db=session, **kwargs)
 
 
+_pending_audits: set = set()
+
+
+def _schedule_audit(**kwargs) -> asyncio.Task:
+    """Schedule the audit write on the loop so client disconnect cannot cancel it."""
+    task = asyncio.ensure_future(_audit_background(**kwargs))
+    _pending_audits.add(task)
+    task.add_done_callback(_pending_audits.discard)
+    return task
+
+
+async def _audit_shielded(**kwargs):
+    """Write an audit record even if the caller is being cancelled (client disconnect)."""
+    await asyncio.shield(_schedule_audit(**kwargs))
+
+
+def feed_sse_buffer(pending: bytes, chunk: bytes) -> tuple:
+    """Append a chunk and pull every complete SSE line out of the buffer.
+
+    Upstream chunks are not framed on event boundaries, so the audit text has
+    to be reassembled here. Incomplete trailing bytes stay in the buffer.
+    """
+    pending += chunk
+    events = []
+    while b"\n" in pending:
+        line, pending = pending.split(b"\n", 1)
+        parsed = parse_sse_chunk(line)
+        if parsed:
+            events.append(parsed)
+    return pending, events
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: ApiKey = Depends(authenticate_api_key),
+    api_key: ApiKey = Depends(rate_limited_api_key),
 ):
     start_time = time.perf_counter()
     request_id = str(uuid.uuid4())
@@ -76,6 +113,14 @@ async def chat_completions(
     async with AsyncSessionLocal() as db:
         provider_config = await _resolve_provider_config(db, api_key.project_id, provider_hint)
 
+    if provider_config.provider not in SUPPORTED_CHAT_COMPLETIONS_PROVIDERS:
+        # Anthropic uses a different API shape (/v1/messages); forwarding OpenAI-format
+        # bodies to it fails with confusing upstream errors, so refuse clearly instead.
+        return JSONResponse(status_code=501, content={"error": {
+            "message": f"Provider '{provider_config.provider}' is not supported yet on /v1/chat/completions",
+            "type": "provider_not_supported",
+        }})
+
     client_ip = request.client.host if request.client else None
     model = body.get("model", "unknown")
     is_stream = body.get("stream", False)
@@ -83,8 +128,9 @@ async def chat_completions(
 
     try:
         modified_body, threat_summary, action_taken = await process_request(body, provider_config, request_id, client_ip)
-    except ValueError as e:
+    except PromptInjectionBlocked as e:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        threat_summary = dict(e.threat_summary)
         threat_summary["blocked"] = True
         threat_summary["reason"] = str(e)
         background_tasks.add_task(
@@ -122,7 +168,10 @@ async def chat_completions(
 async def _handle_non_streaming(body, provider_config, background_tasks, api_key, request_id, model, start_time, raw_request, masked_request, threat_summary, action_taken, client_ip):
     response = await forward_request(body, provider_config)
     latency_ms = int((time.perf_counter() - start_time) * 1000)
-    response_json = response.json()
+    try:
+        response_json = response.json()
+    except json.JSONDecodeError:
+        raise HTTPException(502, "Upstream returned a non-JSON response")
     input_tokens, output_tokens = extract_token_usage(response_json)
     background_tasks.add_task(
         _audit_background,
@@ -140,6 +189,7 @@ async def _handle_streaming(body, provider_config, background_tasks, api_key, re
     upstream_response, byte_iterator = await stream_request(body, provider_config)
     if upstream_response.status_code >= 400:
         error_body = await upstream_response.aread()
+        await upstream_response.aclose()
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         background_tasks.add_task(
             _audit_background,
@@ -159,19 +209,26 @@ async def _handle_streaming(body, provider_config, background_tasks, api_key, re
 
     async def stream_with_audit():
         nonlocal accumulated_text, buffer_size
+        pending = b""
         try:
             async for chunk in byte_iterator:
                 buffer_size += len(chunk)
                 if buffer_size > max_buffer:
                     logger.warning(f"Stream exceeded max buffer for {request_id}")
                     break
-                parsed = parse_sse_chunk(chunk)
-                if parsed:
+                pending, events = feed_sse_buffer(pending, chunk)
+                for parsed in events:
                     accumulated_text = accumulate_stream_text(accumulated_text, parsed)
                 yield chunk
+            if pending.strip():
+                parsed = parse_sse_chunk(pending)
+                if parsed:
+                    accumulated_text = accumulate_stream_text(accumulated_text, parsed)
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            await _audit_background(
+            # Schedule before any further await. A cancellation during close
+            # must not skip the audit write.
+            audit = _schedule_audit(
                 project_id=api_key.project_id, request_id=request_id,
                 provider=provider_config.provider, model=model,
                 latency_ms=latency_ms, input_tokens=_estimate_tokens(raw_request),
@@ -181,6 +238,11 @@ async def _handle_streaming(body, provider_config, background_tasks, api_key, re
                 raw_request=raw_request, masked_request=masked_request,
                 raw_response=accumulated_text,
             )
+            try:
+                await upstream_response.aclose()
+            except (Exception, asyncio.CancelledError):
+                logger.debug("closing upstream after stream", exc_info=True)
+            await asyncio.shield(audit)
 
     return StreamingResponse(
         stream_with_audit(), status_code=200, media_type="text/event-stream",

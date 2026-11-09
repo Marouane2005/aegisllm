@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+import re
 import socket
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -31,17 +32,102 @@ def _private_overrides() -> List[ipaddress._BaseNetwork]:
     return [ipaddress.ip_network(c.strip(), strict=False) for c in raw.split(",") if c.strip()]
 
 
-def is_blocked_ip(ip_str: str, overrides: Optional[Iterable] = None) -> bool:
-    ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        ip = ip.ipv4_mapped
-    for net in overrides if overrides is not None else _private_overrides():
-        if ip.version == net.version and ip in net:
-            return False
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> Optional[ipaddress.IPv4Address]:
+    """Pull an IPv4 address out of the common transition encodings."""
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    raw = int(ip)
+    if ip in ipaddress.ip_network("64:ff9b::/96") or ip in ipaddress.ip_network("64:ff9b:1::/48"):
+        return ipaddress.IPv4Address(raw & 0xFFFFFFFF)
+    if ip in ipaddress.ip_network("2002::/16"):
+        return ipaddress.IPv4Address((raw >> 80) & 0xFFFFFFFF)
+    if ip in ipaddress.ip_network("2001::/32"):
+        # Teredo obfuscates the client address with a bitwise NOT.
+        return ipaddress.IPv4Address((raw & 0xFFFFFFFF) ^ 0xFFFFFFFF)
+    return None
+
+
+def _nonpublic(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast
             or ip.is_unspecified or ip.is_reserved or not ip.is_global):
         return True
-    return any(ip.version == n.version and ip in n for n in _EXTRA_BLOCKED)
+    return any(ip.version == net.version and ip in net for net in _EXTRA_BLOCKED)
+
+
+def is_blocked_ip(ip_str: str, overrides: Optional[Iterable] = None) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except ValueError:
+        return True
+    candidates = [ip]
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None:
+            candidates.append(embedded)
+    nets = list(overrides if overrides is not None else _private_overrides())
+    for candidate in candidates:
+        allowed = any(candidate.version == net.version and candidate in net for net in nets)
+        if allowed:
+            continue
+        if _nonpublic(candidate):
+            return True
+    return False
+
+
+def _aton_part(part: str) -> int:
+    if re.fullmatch(r"0x[0-9a-fA-F]+", part):
+        return int(part, 16)
+    if len(part) > 1 and part.startswith("0") and part.isdigit():
+        return int(part, 8)
+    if part.isdigit():
+        return int(part, 10)
+    raise ValueError(part)
+
+
+def parse_ip_literal(host: str) -> Optional[str]:
+    """Canonicalize a hostname that is an IP, including the legacy inet_aton forms
+    (decimal, hex, octal, and shortened dotted quads). Returns None for DNS names.
+    """
+    host = host.strip().strip("[]")
+    if not host:
+        return None
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if re.fullmatch(r"0x[0-9a-fA-F]+", host):
+        value = int(host, 16)
+        if 0 <= value <= 0xFFFFFFFF:
+            return str(ipaddress.IPv4Address(value))
+        return None
+    if re.fullmatch(r"\d+", host):
+        value = int(host, 10)
+        if 0 <= value <= 0xFFFFFFFF:
+            return str(ipaddress.IPv4Address(value))
+        return None
+    parts = host.split(".")
+    if not 2 <= len(parts) <= 4:
+        return None
+    try:
+        nums = [_aton_part(part) for part in parts]
+    except ValueError:
+        return None
+    try:
+        if len(nums) == 4:
+            if any(n > 255 for n in nums):
+                return None
+            value = (nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]
+        elif len(nums) == 3:
+            if nums[0] > 255 or nums[1] > 255 or nums[2] > 0xFFFF:
+                return None
+            value = (nums[0] << 24) | (nums[1] << 16) | nums[2]
+        else:
+            if nums[0] > 255 or nums[1] > 0xFFFFFF:
+                return None
+            value = (nums[0] << 24) | nums[1]
+    except ValueError:
+        return None
+    return str(ipaddress.IPv4Address(value))
 
 
 def _check_scheme_and_allowlist(url: str):
@@ -66,7 +152,7 @@ def validate_upstream_url(url: str) -> str:
 async def _resolve(host: str, port: int) -> List[str]:
     loop = asyncio.get_running_loop()
     infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    return list(dict.fromkeys(info[4][0] for info in infos))
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
 
 async def resolve_and_validate(url: str) -> ValidatedUpstream:
@@ -74,13 +160,19 @@ async def resolve_and_validate(url: str) -> ValidatedUpstream:
     first address so a later re-resolution (DNS rebinding) cannot redirect the connection."""
     parsed, host = _check_scheme_and_allowlist(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        ips = await _resolve(host, port)
-    except OSError as e:
-        raise SSRFError(f"DNS resolution failed for {host}: {e}")
+    overrides = _private_overrides()
+    # Resolve IP literals ourselves. glibc's getaddrinfo accepts decimal, hex,
+    # octal and shortened quads, and not every platform agrees on them.
+    literal = parse_ip_literal(host)
+    if literal is not None:
+        ips = [literal]
+    else:
+        try:
+            ips = await _resolve(host, port)
+        except OSError as e:
+            raise SSRFError(f"DNS resolution failed for {host}: {e}")
     if not ips:
         raise SSRFError(f"No addresses for {host}")
-    overrides = _private_overrides()
     for ip in ips:
         if is_blocked_ip(ip, overrides):
             raise SSRFError(f"Blocked internal address for {host}: {ip}")

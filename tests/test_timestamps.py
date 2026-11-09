@@ -50,7 +50,8 @@ async def test_retention_cleanup_deletes_only_old_payloads(client, project_with_
     new_id = await _insert_log(project_id, timedelta(days=1))
     await cleanup_old_payloads()
     async with AsyncSessionLocal() as s:
-        count = lambda i: s.scalar(select(func.count()).select_from(AuditPayload).where(AuditPayload.audit_log_id == i))
+        async def count(log_id):
+            return await s.scalar(select(func.count()).select_from(AuditPayload).where(AuditPayload.audit_log_id == log_id))
         assert await count(old_id) == 0
         assert await count(new_id) == 1
 
@@ -62,7 +63,8 @@ async def test_retention_deletes_old_audit_logs_in_batches(client, project_with_
     monkeypatch.setattr(get_settings(), "AUDIT_LOG_RETENTION_DAYS", 60)
     monkeypatch.setattr(get_settings(), "CLEANUP_BATCH_SIZE", 2)
     _, _, project_id = project_with_key  # retention_days=7
-    ancient = [await _insert_log(project_id, timedelta(days=100)) for _ in range(5)]
+    for _ in range(5):
+        await _insert_log(project_id, timedelta(days=100))
     mid = await _insert_log(project_id, timedelta(days=30))
     fresh = await _insert_log(project_id, timedelta(days=1))
     stats = await cleanup_old_payloads()

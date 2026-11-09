@@ -55,4 +55,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Values come from the environment. mypy cannot see that.
+    return Settings()  # type: ignore[call-arg]

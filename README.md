@@ -56,3 +56,10 @@ Audit payloads are PII-masked **at write time**; by default only the masked requ
 |---|---|---|
 | `STORE_RAW_PAYLOADS` | `false` | When `true`, the unmasked bodies are stored as well. |
 | `ADMIN_EMAILS` | *(empty)* | Comma-separated emails allowed to call `GET /api/admin/projects/{id}/audit-logs/{log_id}?include_raw=true`. Everyone else gets `403`. Each raw read is recorded in `payload_access_logs` (user, project, log id, client IP, time). |
+
+## Rate limiting
+
+`/v1/*` proxy routes are limited **per API key** to `RATE_LIMIT_PER_MINUTE` requests per minute (default **60**; `0` disables).
+Counters live in Redis (`REDIS_URL`), so they are shared across workers and restarts. Over the limit the proxy returns
+`429` with a `Retry-After` header (seconds until the window resets). Auth routes keep their own per-IP limits
+(register 5/min, login 10/min).

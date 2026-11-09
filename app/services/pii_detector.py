@@ -15,6 +15,7 @@ class PIIFinding:
 _PATTERNS = {
     "EMAIL": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     "PHONE": re.compile(r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}(?!\d)"),
+    "CREDIT_CARD": re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"),
     "SSN": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     "IP_V4": re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"),
     "AWS_ACCESS_KEY": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -60,7 +61,7 @@ def detect_pii(text: str) -> List[PIIFinding]:
             findings.append(PIIFinding("EMAIL", m.start(), m.end(), m.group(), "[EMAIL_REDACTED]"))
             seen_spans.add((m.start(), m.end()))
 
-    for m in _PATTERNS["PHONE"].finditer(text):
+    for m in _PATTERNS["CREDIT_CARD"].finditer(text):
         if _is_credit_card(m.group()) and not overlaps(m.start(), m.end()):
             findings.append(PIIFinding("CREDIT_CARD", m.start(), m.end(), m.group(), "[CARD_REDACTED]"))
             seen_spans.add((m.start(), m.end()))

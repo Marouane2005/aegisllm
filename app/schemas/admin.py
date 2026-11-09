@@ -1,7 +1,18 @@
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, timezone
+from typing import Annotated, Optional, List
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, SecretStr
+from pydantic import AfterValidator, BaseModel, EmailStr, Field, SecretStr
+
+
+def _as_utc(value: datetime) -> datetime:
+    # DB columns are TIMESTAMP WITHOUT TIME ZONE holding UTC. Attach the zone so
+    # the JSON says so ("...Z") and browsers don't read it as local time.
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+UTCDateTime = Annotated[datetime, AfterValidator(_as_utc)]
 
 
 class UserRegister(BaseModel):
@@ -18,7 +29,7 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     is_active: bool
-    created_at: datetime
+    created_at: UTCDateTime
     model_config = {"from_attributes": True}
 
 
@@ -41,7 +52,7 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     retention_days: int
-    created_at: datetime
+    created_at: UTCDateTime
     model_config = {"from_attributes": True}
 
 
@@ -54,7 +65,7 @@ class ApiKeyCreatedResponse(BaseModel):
     name: str
     key: str
     key_prefix: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class ApiKeyResponse(BaseModel):
@@ -62,8 +73,8 @@ class ApiKeyResponse(BaseModel):
     name: str
     key_prefix: str
     is_active: bool
-    created_at: datetime
-    last_used_at: Optional[datetime]
+    created_at: UTCDateTime
+    last_used_at: Optional[UTCDateTime]
     model_config = {"from_attributes": True}
 
 
@@ -84,7 +95,7 @@ class ProviderConfigResponse(BaseModel):
     provider: str
     base_url: Optional[str]
     is_active: bool
-    created_at: datetime
+    created_at: UTCDateTime
     model_config = {"from_attributes": True}
 
 
@@ -93,7 +104,7 @@ class AuditLogResponse(BaseModel):
     request_id: str
     provider: str
     model: str
-    timestamp: datetime
+    timestamp: UTCDateTime
     latency_ms: int
     input_tokens: int
     output_tokens: int
@@ -115,6 +126,7 @@ class MetricsResponse(BaseModel):
     blocked_requests: int
     masked_requests: int
     allowed_requests: int
+    rate_limited_requests: int = 0
     avg_latency_ms: float
     p95_latency_ms: float
     total_input_tokens: int

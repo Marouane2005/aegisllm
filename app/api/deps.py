@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.db.models import User, ApiKey
 from app.core.security import hash_incoming_api_key
+from app.core.clock import utcnow_naive
 
 settings = get_settings()
 bearer_scheme = HTTPBearer()
@@ -52,7 +53,7 @@ async def authenticate_api_key(
     if api_key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
-    now = datetime.utcnow()
+    now = utcnow_naive()
     if api_key.last_used_at is None or (now - api_key.last_used_at) > timedelta(minutes=10):
         api_key.last_used_at = now
         await db.commit()

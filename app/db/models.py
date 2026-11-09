@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from app.core.clock import utcnow_naive
 from sqlalchemy import (
     Column, String, DateTime, Boolean, Integer, ForeignKey, Text, Index,
 )
@@ -13,7 +13,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 
 class Project(Base):
@@ -22,7 +22,7 @@ class Project(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(100), nullable=False)
     retention_days = Column(Integer, default=30, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 
 class ProviderConfig(Base):
@@ -33,7 +33,7 @@ class ProviderConfig(Base):
     encrypted_api_key = Column(Text, nullable=False)
     base_url = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index("ix_provider_project_name", "project_id", "provider", unique=True),
@@ -48,7 +48,7 @@ class ApiKey(Base):
     key_prefix = Column(String(20), nullable=False)
     name = Column(String(100), nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     last_used_at = Column(DateTime, nullable=True)
 
 
@@ -59,7 +59,7 @@ class AuditLog(Base):
     request_id = Column(String(64), unique=True, nullable=False, index=True)
     provider = Column(String(50), nullable=False)
     model = Column(String(100), nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    timestamp = Column(DateTime, default=utcnow_naive, nullable=False, index=True)
     latency_ms = Column(Integer, nullable=False)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
@@ -96,4 +96,4 @@ class PayloadAccessLog(Base):
     project_id = Column(UUID(as_uuid=True), nullable=False)
     audit_log_id = Column(UUID(as_uuid=True), nullable=False)
     client_ip = Column(String(64), nullable=True)
-    accessed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    accessed_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)

@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
+from app.core.clock import utcnow_naive
 
 import pytest
 from sqlalchemy import select, func
@@ -86,10 +87,10 @@ async def test_time_filter_and_cursor_stay_naive_utc(client, project_with_key):
             session.add(AuditLog(
                 project_id=uuid.UUID(project_id), request_id=str(uuid.uuid4()), provider="openai", model="m",
                 latency_ms=3, input_tokens=1, output_tokens=1, action_taken="allowed", threat_summary={},
-                status_code=200, timestamp=datetime.utcnow() - age,
+                status_code=200, timestamp=utcnow_naive() - age,
             ))
         await session.commit()
-    start = (datetime.utcnow() - timedelta(minutes=30)).isoformat() + "+00:00"
+    start = (utcnow_naive() - timedelta(minutes=30)).isoformat() + "+00:00"
     resp = await client.get(
         f"/api/admin/projects/{project_id}/audit-logs",
         params={"start_time": start, "limit": 1},
@@ -121,7 +122,7 @@ async def test_retention_does_not_touch_fresh_rows(client, project_with_key, mon
         fresh = AuditLog(
             project_id=uuid.UUID(project_id), request_id=str(uuid.uuid4()), provider="openai", model="m",
             latency_ms=1, input_tokens=1, output_tokens=0, action_taken="allowed", threat_summary={"ok": True},
-            status_code=200, timestamp=datetime.utcnow() - timedelta(hours=1),
+            status_code=200, timestamp=utcnow_naive() - timedelta(hours=1),
         )
         session.add(fresh)
         await session.flush()

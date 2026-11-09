@@ -308,10 +308,17 @@ async def get_metrics(
     masked_result = await db.execute(select(func.count(AuditLog.id)).where(*base_where, AuditLog.action_taken == "masked"))
     masked_requests = masked_result.scalar() or 0
 
-    allowed_requests = total_requests - blocked_requests - masked_requests
+    rate_limited_result = await db.execute(
+        select(func.count(AuditLog.id)).where(*base_where, AuditLog.action_taken == "rate_limited")
+    )
+    rate_limited_requests = rate_limited_result.scalar() or 0
 
+    allowed_requests = total_requests - blocked_requests - masked_requests - rate_limited_requests
+
+    # Rate-limited calls never reach the upstream, so their 0 ms would skew latency.
     latency_result = await db.execute(
-        select(func.avg(AuditLog.latency_ms), func.percentile_cont(0.95).within_group(AuditLog.latency_ms)).where(*base_where)
+        select(func.avg(AuditLog.latency_ms), func.percentile_cont(0.95).within_group(AuditLog.latency_ms))
+        .where(*base_where, AuditLog.action_taken != "rate_limited")
     )
     avg_latency, p95_latency = latency_result.one()
 
@@ -335,6 +342,7 @@ async def get_metrics(
         blocked_requests=blocked_requests,
         masked_requests=masked_requests,
         allowed_requests=allowed_requests,
+        rate_limited_requests=rate_limited_requests,
         avg_latency_ms=round(float(avg_latency or 0), 2),
         p95_latency_ms=round(float(p95_latency or 0), 2),
         total_input_tokens=total_input_tokens,

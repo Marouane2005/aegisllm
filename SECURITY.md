@@ -1,35 +1,30 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-Only the latest release is supported with security updates.
-
-## Threat Model
-
-| Threat | Mitigation |
+| Version | Status |
 |---|---|
-| Upstream API key theft | Fernet-encrypted at rest. Master key in env var only. Never returned via API. |
-| Aegis API key leakage | Stored as SHA-256 hashes. Plaintext shown once at creation, never again. |
-| Prompt injection | Multi-signal heuristic (jailbreak phrases, invisible chars, base64 payloads, homoglyphs). |
-| PII leakage to LLM providers | Regex + Luhn-validated detectors. Masked before forwarding. |
-| SSRF via proxy | Strict upstream host allowlist. Redirect following disabled. Internal IPs blocked. |
-| Denial of service | Per-IP rate limiting via Redis. Request body cap (2MB). Stream buffer cap (4MB). |
-| Credential brute force | Argon2 password hashing. Rate-limited login (10/min) and register (5/min). |
-| Session hijacking | Short-lived JWTs. Strict CORS allowlist. |
-| SQL injection | SQLAlchemy ORM with parameterized queries. No raw SQL. |
-| XSS | React's default escaping. CSP-ready headers via Caddy. |
-| Disk exhaustion | Scheduled cleanup deletes payloads older than `retention_days`. |
-| Memory exhaustion | Async streaming with bounded buffers. Connection pool limits. Redis LRU eviction. |
+| 0.2.x | Supported |
+| 0.1.0 | No longer updated |
 
-## Known Limitations
+0.1.0 is the initial import. 0.2.0 is the first release that includes the SSRF pin, write-time masking, per-key limits, and retention of audit rows.
 
-- Zero-day jailbreaks cannot be caught by heuristics.
-- Upstream provider compromise is out of scope.
-- `FERNET_MASTER_KEY` theft + DB access = upstream key decryption. Protect your env vars.
-- Dashboard JWT in localStorage — use HTTPS-only and short expiry.
+## Reporting a vulnerability
 
-## Reporting a Vulnerability
+Open a [private security advisory](https://github.com/Marouane2005/aegisllm/security/advisories/new) on this repository. Please do not file a public issue for a bypass, a credential leak, or anything that is exploitable on a default deploy.
 
-Email security@yourdomain.com or open a private GitHub security advisory. Do NOT open a public issue.
+Include the version, the request you sent (with secrets redacted), and what you expected to happen. A report that describes impact without a step-by-step exploit is still useful.
 
-Acknowledgement within 48 hours. Fix timeline within 7 days.
+## What "supported" means
+
+Fixes for issues that match [docs/threat-model.md](docs/threat-model.md): injection bypasses against the documented heuristic, PII that a listed detector should have caught, SSRF to a non-global address, authentication and rate-limit bypasses, and audit rows that are missing or that retain raw text when `STORE_RAW_PAYLOADS` is off.
+
+Out of scope, same as the threat model: host compromise, a stolen `FERNET_MASTER_KEY`, jailbreaks the heuristic does not claim to catch, and availability of the upstream provider.
+
+## Hardening defaults
+
+- `STORE_RAW_PAYLOADS` defaults to off.
+- `ADMIN_EMAILS` defaults to empty, so `include_raw=true` is denied.
+- `UPSTREAM_PRIVATE_IP_ALLOWLIST` defaults to empty.
+- `ALLOW_REGISTRATION` defaults to on so the first account can be created. Turn it off after that.
+- Debug docs are off unless `DEBUG=true`.

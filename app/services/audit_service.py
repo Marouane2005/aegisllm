@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
@@ -14,6 +14,17 @@ def mask_payload(text: Optional[str]) -> Optional[str]:
     if not text:
         return text
     return mask_text(text, detect_pii(text))
+
+
+def _scrub(value):
+    """Mask PII that leaked into nested audit metadata (evidence snippets)."""
+    if isinstance(value, str):
+        return mask_payload(value)
+    if isinstance(value, dict):
+        return {key: _scrub(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item) for item in value]
+    return value
 
 
 async def write_audit_record(
@@ -34,10 +45,13 @@ async def write_audit_record(
     raw_response: Optional[str] = None,
     masked_response: Optional[str] = None,
 ) -> None:
-    # Mask at write time: the masked copies are always derived from the raw text here,
-    # and raw text is only persisted when STORE_RAW_PAYLOADS is explicitly enabled.
-    masked_request = mask_payload(masked_request or raw_request)
-    masked_response = mask_payload(masked_response or raw_response)
+    # Always derive the masked copy from the original body when we have it.
+    # A caller-supplied "masked" string is not trusted: it may still contain PII.
+    request_source = raw_request if raw_request is not None else masked_request
+    response_source = raw_response if raw_response is not None else masked_response
+    masked_request = mask_payload(request_source)
+    masked_response = mask_payload(response_source)
+    threat_summary = _scrub(threat_summary or {})
     if not get_settings().STORE_RAW_PAYLOADS:
         raw_request = raw_response = None
     try:

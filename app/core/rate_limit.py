@@ -1,19 +1,18 @@
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from app.core.config import get_settings
-
-# Single shared limiter so all routes use the configured (Redis) storage and
-# limits are shared across workers/restarts.
-limiter = Limiter(key_func=get_remote_address, storage_uri=get_settings().REDIS_URL)
-
-
 import math
 import time
+
 from fastapi import Depends, HTTPException
 from limits import parse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.api.deps import authenticate_api_key
+from app.core.config import get_settings
 from app.db.models import ApiKey
+
+# Single shared limiter so all routes use the configured (Redis) storage and
+# limits are shared across workers and restarts.
+limiter = Limiter(key_func=get_remote_address, storage_uri=get_settings().REDIS_URL)
 
 
 def _per_key_limit():

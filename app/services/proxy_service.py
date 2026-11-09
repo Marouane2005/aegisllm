@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncIterator, Optional, Tuple
+from typing import Optional
 import httpx
 from urllib.parse import urlparse
 from app.core.config import get_settings
@@ -8,7 +8,7 @@ from app.core.security import decrypt_secret
 from app.db.models import ProviderConfig
 from app.services.pii_detector import detect_pii, mask_text, summarize_findings
 from app.services.injection_guard import evaluate_injection_risk
-from app.services.ssrf_guard import resolve_and_validate
+from app.services.ssrf_guard import SSRFError, resolve_and_validate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -65,17 +65,32 @@ def _build_upstream_headers(provider_config: ProviderConfig) -> dict:
     return headers
 
 
+def _host_header(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return host
+
+
 async def _build_pinned_request(body: dict, provider_config: ProviderConfig, path: str) -> httpx.Request:
     """Validate the upstream (DNS + IP blocklist) and build a request that connects to the
     vetted IP while keeping the original Host header and TLS SNI/cert hostname.
-    Redirects are never followed (client has follow_redirects=False); 3xx is returned as-is."""
+    Redirects are never followed; a 3xx is rejected instead of being fetched."""
     target = await resolve_and_validate(_build_upstream_url(provider_config, path))
     headers = _build_upstream_headers(provider_config)
-    headers["Host"] = urlparse(target.url).netloc
+    headers["Host"] = _host_header(target.url)
     return _get_client().build_request(
         "POST", target.pinned_url, json=body, headers=headers,
         extensions={"sni_hostname": target.host},
     )
+
+
+def _reject_redirect(response: httpx.Response) -> None:
+    if 300 <= response.status_code < 400:
+        raise SSRFError("Upstream redirect was not followed")
 
 
 def _extract_text_from_messages(messages: list) -> str:
@@ -154,12 +169,21 @@ async def process_request(body: dict, provider_config: ProviderConfig, request_i
 
 async def forward_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
     req = await _build_pinned_request(body, provider_config, path)
-    return await _get_client().send(req)
+    response = await _get_client().send(req, follow_redirects=False)
+    try:
+        _reject_redirect(response)
+    except SSRFError:
+        await response.aclose()
+        raise
+    return response
 
 
 async def stream_request(body: dict, provider_config: ProviderConfig, path: str = "v1/chat/completions"):
     req = await _build_pinned_request(body, provider_config, path)
-    response = await _get_client().send(req, stream=True)
+    response = await _get_client().send(req, stream=True, follow_redirects=False)
+    if 300 <= response.status_code < 400:
+        await response.aclose()
+        raise SSRFError("Upstream redirect was not followed")
     return response, response.aiter_bytes()
 
 

@@ -28,10 +28,17 @@ def encode_cursor(timestamp: datetime, log_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
 
 
+def _naive_utc(dt: datetime) -> datetime:
+    # audit_logs.timestamp is TIMESTAMP WITHOUT TIME ZONE holding UTC.
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def decode_cursor(cursor: str):
     try:
         data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-        return datetime.fromisoformat(data["t"]), uuid.UUID(data["i"])
+        return _naive_utc(datetime.fromisoformat(data["t"])), uuid.UUID(data["i"])
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid cursor")
 
@@ -193,18 +200,12 @@ async def list_audit_logs(
     start_dt = end_dt = None
     if start_time:
         try:
-            start_dt = datetime.fromisoformat(start_time)
-            if start_dt.tzinfo is not None:
-                # audit_logs.timestamp is TIMESTAMP WITHOUT TIME ZONE holding UTC
-                start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            start_dt = _naive_utc(datetime.fromisoformat(start_time))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start_time format")
     if end_time:
         try:
-            end_dt = datetime.fromisoformat(end_time)
-            if end_dt.tzinfo is not None:
-                # audit_logs.timestamp is TIMESTAMP WITHOUT TIME ZONE holding UTC
-                end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            end_dt = _naive_utc(datetime.fromisoformat(end_time))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_time format")
 

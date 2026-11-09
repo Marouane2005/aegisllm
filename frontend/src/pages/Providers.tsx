@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import { parseApiDate } from '../lib/time';
 
 interface ProviderConfig { id: string; provider: string; base_url: string | null; is_active: boolean; created_at: string; }
 
@@ -114,7 +115,7 @@ export default function Providers() {
                       {config.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{new Date(config.created_at).toLocaleDateString()}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{parseApiDate(config.created_at).toLocaleDateString()}</td>
                   <td className="px-6 py-4 space-x-3">
                     <button onClick={() => startEdit(config)} className="text-primary-600 hover:underline text-sm">Edit</button>
                     <button onClick={() => handleToggleActive(config)} className="text-gray-600 hover:underline text-sm">{config.is_active ? 'Disable' : 'Enable'}</button>

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../api/client';
+import { ACTION_BADGE } from '../lib/actions';
+import { parseApiDate } from '../lib/time';
 
 interface AuditLog { id: string; request_id: string; provider: string; model: string; timestamp: string; latency_ms: number; input_tokens: number; output_tokens: number; action_taken: string; threat_summary: any; status_code: number; client_ip: string | null; }
 interface AuditPayload { id: string; audit_log_id: string; masked_request: string | null; masked_response: string | null; raw_request?: string | null; raw_response?: string | null; }
@@ -71,13 +73,7 @@ export default function AuditLogs() {
     } finally { setPayloadLoading(false); }
   };
 
-  const actionColor = (action: string) => {
-    switch (action) {
-      case 'blocked': return 'bg-red-100 text-red-800';
-      case 'masked': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-green-100 text-green-800';
-    }
-  };
+  const actionColor = (action: string) => ACTION_BADGE[action] ?? 'bg-gray-100 text-gray-800';
 
   return (
     <div>
@@ -97,6 +93,7 @@ export default function AuditLogs() {
             <option value="allowed">Allowed</option>
             <option value="masked">Masked</option>
             <option value="blocked">Blocked</option>
+            <option value="rate_limited">Rate limited</option>
           </select>
           <input type="text" placeholder="Provider" value={providerFilter} onChange={(e) => setProviderFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md" />
           <input type="text" placeholder="Request ID" value={requestIdFilter} onChange={(e) => setRequestIdFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md font-mono text-sm" />
@@ -129,7 +126,7 @@ export default function AuditLogs() {
             ) : (
               logs.map((log) => (
                 <tr key={log.id} onClick={() => openDetail(log)} className="hover:bg-gray-50 cursor-pointer">
-                  <td className="px-4 py-3 text-sm">{new Date(log.timestamp).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-sm">{parseApiDate(log.timestamp).toLocaleString()}</td>
                   <td className="px-4 py-3"><span className={`px-2 py-1 text-xs rounded-full ${actionColor(log.action_taken)}`}>{log.action_taken}</span></td>
                   <td className="px-4 py-3 text-sm">{log.provider}</td>
                   <td className="px-4 py-3 text-sm font-mono">{log.model}</td>
@@ -171,7 +168,7 @@ export default function AuditLogs() {
               {Object.keys(selectedLog.threat_summary || {}).length > 0 && (
                 <div className="bg-red-50 border border-red-200 p-4 rounded-md">
                   <h3 className="font-semibold text-red-800 mb-2">Threat Summary</h3>
-                  <pre className="text-xs overflow-auto text-red-900">{JSON.stringify(selectedLog.threat_summary, null, 2)}</pre>
+                  <pre className="text-xs overflow-auto text-red-900 whitespace-pre-wrap break-words">{JSON.stringify(selectedLog.threat_summary, null, 2)}</pre>
                 </div>
               )}
 
@@ -190,13 +187,13 @@ export default function AuditLogs() {
                 <div className="space-y-4">
                   <div>
                     <h3 className="font-semibold mb-2">Request</h3>
-                    <pre className="bg-gray-900 text-gray-100 p-4 rounded-md text-xs overflow-auto max-h-64">
+                    <pre className="bg-gray-900 text-gray-100 p-4 rounded-md text-xs overflow-auto max-h-64 whitespace-pre-wrap break-words">
                       {(showRaw && payload.raw_request) ? payload.raw_request : (payload.masked_request || '(empty)')}
                     </pre>
                   </div>
                   <div>
                     <h3 className="font-semibold mb-2">Response</h3>
-                    <pre className="bg-gray-900 text-gray-100 p-4 rounded-md text-xs overflow-auto max-h-64">
+                    <pre className="bg-gray-900 text-gray-100 p-4 rounded-md text-xs overflow-auto max-h-64 whitespace-pre-wrap break-words">
                       {(showRaw && payload.raw_response) ? payload.raw_response : (payload.masked_response || '(empty)')}
                     </pre>
                   </div>

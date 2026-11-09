@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
 import api from '../api/client';
+import { ACTION_FALLBACK_HEX, ACTION_HEX, ACTION_LABEL } from '../lib/actions';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
 interface Project { id: string; name: string; }
 interface Metrics {
   total_requests: number; blocked_requests: number; masked_requests: number; allowed_requests: number;
+  rate_limited_requests?: number;
   avg_latency_ms: number; p95_latency_ms: number;
   total_input_tokens: number; total_output_tokens: number;
   requests_by_provider: Record<string, number>; requests_by_action: Record<string, number>;
 }
-
-const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6'];
 
 export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -35,7 +35,7 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, [projectId, hours]);
 
-  const actionData = metrics ? Object.entries(metrics.requests_by_action).map(([action, count]) => ({ action, count })) : [];
+  const actionData = metrics ? Object.entries(metrics.requests_by_action).map(([action, count]) => ({ action, label: ACTION_LABEL[action] ?? action, count })) : [];
   const providerData = metrics ? Object.entries(metrics.requests_by_provider).map(([provider, count]) => ({ provider, count })) : [];
 
   return (
@@ -63,7 +63,7 @@ export default function Dashboard() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
             <div className="bg-white p-6 rounded-lg shadow">
               <p className="text-sm text-gray-600">Total Requests</p>
               <p className="text-3xl font-bold">{metrics.total_requests.toLocaleString()}</p>
@@ -77,6 +77,10 @@ export default function Dashboard() {
               <p className="text-3xl font-bold text-yellow-600">{metrics.masked_requests}</p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow">
+              <p className="text-sm text-gray-600">Rate limited</p>
+              <p className="text-3xl font-bold text-purple-600">{metrics.rate_limited_requests ?? 0}</p>
+            </div>
+            <div className="bg-white p-6 rounded-lg shadow">
               <p className="text-sm text-gray-600">P95 Latency</p>
               <p className="text-3xl font-bold">{metrics.p95_latency_ms}ms</p>
               <p className="text-xs text-gray-500">avg: {metrics.avg_latency_ms}ms</p>
@@ -88,8 +92,8 @@ export default function Dashboard() {
               <h2 className="text-lg font-semibold mb-4">Requests by Action</h2>
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
-                  <Pie data={actionData} dataKey="count" nameKey="action" cx="50%" cy="50%" outerRadius={90} label>
-                    {actionData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  <Pie data={actionData} dataKey="count" nameKey="label" cx="50%" cy="50%" outerRadius={90} label>
+                    {actionData.map((d) => <Cell key={d.action} fill={ACTION_HEX[d.action] ?? ACTION_FALLBACK_HEX} />)}
                   </Pie>
                   <Tooltip /><Legend />
                 </PieChart>

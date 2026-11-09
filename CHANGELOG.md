@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- API timestamps are serialized as UTC (`Z`). They had no zone, so the dashboard read them as local time and showed shifted times outside UTC. The dashboard also treats a zoneless timestamp as UTC.
+- A rate-limited call (429) writes an audit row with `action_taken=rate_limited`. Metrics report it as `rate_limited_requests`, it is no longer counted as allowed, and it is left out of latency.
+- Long request and response bodies wrap in the audit detail view instead of running off the side.
+- The "Requests by Action" chart uses the same colors as the stat cards, with its own color for rate-limited calls.
+- `datetime.utcnow()` is replaced with a naive-UTC helper built on `datetime.now(timezone.utc)`, which removes its deprecation warnings.
+
 ## 0.2.0 - 2026-11-09
 
 ### Fixed
